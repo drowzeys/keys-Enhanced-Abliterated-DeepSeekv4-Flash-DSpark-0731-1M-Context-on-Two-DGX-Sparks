@@ -6,6 +6,18 @@ MiaAI-Lab / stock 0731 recipe and older benches: [`previous-version/`](previous-
 
 These weights have safety refusals removed. Research / red-team only — you supply the guardrails.
 
+## Big thanks
+
+This recipe stands on other people's work. Please star them.
+
+- **[Anemll](https://github.com/Anemll/dspark-vllm-gx10)** — GB10 vLLM + DSpark image  
+- **[MiaAI-Lab](https://github.com/MiaAI-Lab/DeepSeek-v4-Flash-DSpark-2x-DGX-Spark)** — two-node Spark packaging  
+- **[Tony / tonyd2wild](https://github.com/tonyd2wild/ds4-h3-video-gen-factory)** — dual-serve factory + 1M NVFP4 recipe  
+- **[Fraser Price](https://huggingface.co/fraserprice/DeepSeek-V4-Flash-DSpark)** · **[Rafael Caricio](https://github.com/rafaelcaricio/vllm/pull/1)** — DSpark in vLLM  
+- **DeepSeek-AI** — V4-Flash 0731  
+
+Full list: **[CREDITS.md](CREDITS.md)**.
+
 ## Headline (measured 2026-08-23, live champion TP=2 `.1`+`.5`)
 
 Real-serve, thinking **off**, decode = post-TTFT. Anemll `nvfp4_ds_mla`, GID **unset**, util **0.835**, max_model_len **1,048,576**.
@@ -55,7 +67,4 @@ bash scripts/one-shot-setup.sh
 
 ## Credits
 
-- **Anemll** runtime: [Anemll/dspark-vllm-gx10](https://github.com/Anemll/dspark-vllm-gx10)
-- **MiaAI-Lab** 2× Spark packaging: [MiaAI-Lab/DeepSeek-v4-Flash-DSpark-2x-DGX-Spark](https://github.com/MiaAI-Lab/DeepSeek-v4-Flash-DSpark-2x-DGX-Spark)
-- **Tony / tonyd2wild** dual-serve factory lineage: [ds4-h3-video-gen-factory](https://github.com/tonyd2wild/ds4-h3-video-gen-factory)
-- Keys ablit + 1.0 Beta champion knobs: drowzeys
+See **[CREDITS.md](CREDITS.md)**. Keys layer: L10–35 ablit + champion knobs. Do not re-attribute Anemll / Mia / Tony.
