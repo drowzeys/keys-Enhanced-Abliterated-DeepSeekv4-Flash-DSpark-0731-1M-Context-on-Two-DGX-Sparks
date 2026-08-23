@@ -16,7 +16,7 @@ This recipe stands on other people's work. Please star them.
 - **[Fraser Price](https://huggingface.co/fraserprice/DeepSeek-V4-Flash-DSpark)** · **[Rafael Caricio](https://github.com/rafaelcaricio/vllm/pull/1)** — DSpark in vLLM  
 - **DeepSeek-AI** — V4-Flash 0731  
 
-Full list: **[CREDITS.md](CREDITS.md)**.
+Full list: **[CREDITS.md](CREDITS.md)**. Please donate / support: **[github.com/sponsors/drowzeys](https://github.com/sponsors/drowzeys)**.
 
 ## Headline (measured 2026-08-23, live champion TP=2 `.1`+`.5`)
 
