@@ -1,533 +1,61 @@
-# DeepSeek V4 Flash 0731 DSpark on 2x DGX Spark
+# keys-Enhanced-Abliterated-DeepSeekv4-Flash-DSpark-0731-1M-Context-on-Two-DGX-Sparks
 
-<p align="center">
-  <sub>by <a href="https://x.com/MiaAI_lab">Mia'a AI Lab</a></sub>
-  <br><br>
-  <a href="https://ko-fi.com/Z8Z3SPLOD" target="_blank" rel="noopener noreferrer" style="display:inline-block;margin:0 8px;vertical-align:middle;"><img src="https://storage.ko-fi.com/cdn/kofi6.png?v=6" alt="Buy Me a Coffee at ko-fi.com" height="28" style="height:28px;width:auto;vertical-align:middle;border:0;" /></a>
-  <a href="https://x.com/MiaAI_lab" target="_blank" rel="noopener noreferrer" style="display:inline-block;margin:0 8px;vertical-align:middle;"><img src="https://img.shields.io/badge/Follow%20me%20on%20X-000000?style=for-the-badge&logo=x&logoColor=white" alt="Follow Mia on X" height="28" style="height:28px;width:auto;vertical-align:middle;border:0;" /></a>
-</p>
+**1.0 Beta** · Two DGX Sparks (GB10) · DeepSeek-V4-Flash **0731** · DSpark · **1M context** · L10–35 anchorstock ablit · Anemll vLLM 0.25.2
 
-Two-node DGX Spark recipe for **`deepseek-ai/DeepSeek-V4-Flash-0731`**: vLLM TP=2,
-DSpark speculative decoding, **1M-token** ceiling, `nvfp4_ds_mla` KV.
+MiaAI-Lab / stock 0731 recipe and older benches: [`previous-version/`](previous-version/README.md)
 
-**Default image:** [`ghcr.io/anemll/dspark-vllm-gx10:0.1.1`](https://github.com/Anemll/dspark-vllm-gx10)
+These weights have safety refusals removed. Research / red-team only — you supply the guardrails.
 
-**Numbers:** [results/RESULTS-2026-08-14.md](results/RESULTS-2026-08-14.md) (dated
-tables, method, historical lanes). Checkpoint / encoder:
-[docs/DEEPSEEK_V4_FLASH_0731.md](docs/DEEPSEEK_V4_FLASH_0731.md).
+## Headline (measured 2026-08-23, live champion TP=2 `.1`+`.5`)
 
----
+Real-serve, thinking **off**, decode = post-TTFT. Anemll `nvfp4_ds_mla`, GID **unset**, util **0.835**, max_model_len **1,048,576**.
 
-## Quick start
+| | Champion 2× GB10 |
+|---|---:|
+| C1 list | **82.7 tok/s** |
+| C1 count | **~85 tok/s** |
+| C6 list aggregate | **~309 tok/s** |
+| Context | **1,048,576** |
+| GPU util | **0.835** (hard cap **0.85**) |
 
-Run everything from the **head** node. You need two DGX Sparks, RoCE/NCCL
-working, and the same image + HF cache on both.
+Same-weight eugr B12X+fp8 KV side-lane (786k ctx): C1 list **79.6**, C6 list **~298**. About the same class; champion stays slightly ahead. Do not raise util above 0.85.
 
-1. **Env**
+Raw JSON: [`results/1.0-beta/`](results/1.0-beta/).
 
-   ```bash
-   cp .env.dspark.example .env.dspark
-   ```
+## One-shot (agent)
 
-   Set at least: `WORKER_HOST`, `MASTER_ADDR`, `NCCL_IB_HCA`,
-   `NCCL_SOCKET_IFNAME` (and matching `TP_` / `GLOO_` IF names),
-   `VLLM_HOST_IP`, `WORKER_VLLM_HOST_IP`, `HF_CACHE`, `WORKER_HF_CACHE`.
-   If the worker checkout is not the same path, set `WORKER_DIR` /
-   `WORKER_SCRIPT_DIR`.
-
-   Example fabric (edit f0 vs f1 and GID for your ring):
-
-   ```env
-   WORKER_HOST=10.0.0.2
-   MASTER_ADDR=10.0.0.1
-   VLLM_HOST_IP=10.0.0.1
-   WORKER_VLLM_HOST_IP=10.0.0.2
-   NCCL_IB_HCA=rocep1s0f1
-   NCCL_SOCKET_IFNAME=enp1s0f1np1
-   DSPARK_VLLM_IMAGE=ghcr.io/anemll/dspark-vllm-gx10:0.1.1
-   ```
-
-   Leave serving knobs at the defaults unless you mean to change them.
-   Meaningful on/off flags (thinking, vision, hotfixes) are
-   listed under [.env.dspark switches](#envdspark-switches).
-
-2. **Image on both nodes**
-
-   ```bash
-   docker pull ghcr.io/anemll/dspark-vllm-gx10:0.1.1
-   ```
-
-   Repeat on the worker (or pull there via ssh). Start refuses to launch if
-   either node is missing the image.
-
-3. **Weights on both nodes**
-
-   ```bash
-   ./prepare-dspark-model-cache.sh --official
-   ```
-
-   Use `--yes` (reads model vars from `.env.dspark`). Prepare forces HF
-   online even if `HF_HUB_OFFLINE=1`, then you can serve offline. After the cache is complete, keep `HF_HUB_OFFLINE=1` so a hub
-   retry cannot fill the worker disk.
-
-4. **Optional CPU gates** (no GPU; will not measure tok/s)
-
-   ```bash
-   bash scripts/ci-validate.sh
-   ```
-
-
-5. **Start** (worker first, then head)
-
-   ```bash
-   ./start-deepseek-v4-flash-dspark.sh
-   ```
-
-   One-shot bind override: `./start-deepseek-v4-flash-dspark.sh --host 0.0.0.0 --port 9000`.
-   After a reboot, dockerd may already have restored the ranks (`restart: unless-stopped`); start then exits **3** (already running), not 1. That is expected — do not `./stop` unless you want a cold start. systemd: `SuccessExitStatus=3`.
-
-6. **Check it is up**
-
-   ```bash
-   curl -fsS http://127.0.0.1:8888/v1/models
-   ./smoke-deepseek-v4-flash-dspark.sh
-   ./status-deepseek-v4-flash-dspark.sh
-   ```
-
-   Expect `"id": "deepseek-v4-flash-0731"` and `"max_model_len": 1048576`.
-   Boot log (trust the live numbers):
-
-   ```text
-   Available KV cache memory: 18.08 GiB
-   GPU KV cache size: 2,493,464 tokens
-   Maximum concurrency for 1,048,576 tokens per request: 2.38x
-   ```
-
-API: `http://HEAD_NODE_IP:8888/v1` (`VLLM_HOST=0.0.0.0` by default).
-Head-only tests: `VLLM_HOST=127.0.0.1`.
-
-Day-to-day: `./status-…`, `./logs-…`, `./stop-…`. Disable **earlyoom** on both
-hosts or it can kill vLLM under deep-context load.
-
----
-
-## Default profile
-
-| Knob | Default |
-| --- | --- |
-| Image | `ghcr.io/anemll/dspark-vllm-gx10:0.1.1` |
-| Checkpoint | official 0731 @ `9e165c30e2704aec5d9d593cce3eebd58bbef1cb` |
-| Served name | `deepseek-v4-flash-0731` |
-| Context ceiling | `MAX_MODEL_LEN=1048576` (1M) |
-| Concurrent seqs | `MAX_NUM_SEQS=6` |
-| Batch tokens | `MAX_NUM_BATCHED_TOKENS=8192` |
-| KV | `nvfp4_ds_mla`, text util **0.835** (~2.49M tokens on this cluster) |
-| Spec | `MTP_NUM_TOKENS=5` (must be ≥ checkpoint `dspark_block_size`) |
-| Thinking | `DEFAULT_THINKING=max` (`off` / `low` / `high` / `max`) |
-| Graphs | `VLLM_USE_BREAKABLE_CUDAGRAPH=0` (keep this; unset is slower) |
-
-`start-*.sh` exports `GPU_MEMORY_UTILIZATION` from
-`GPU_MEMORY_UTILIZATION_TEXT` (or `_VISION`). Do not set
-`GPU_MEMORY_UTILIZATION` by hand.
-
-`max_model_len` and `max_num_seqs` are **ceilings**, not reservations. The
-limit is `sum(live tokens) ≤ KV pool`. Six normal agent turns fit; six
-simultaneous full-1M requests do not. See [How the KV cache works](#how-the-kv-cache-works-why-1m--concurrency-is-safe).
-
-Long coding / big prompts (optional, still 1M ceiling):
-
-```env
-MAX_NUM_SEQS=4
-MAX_NUM_BATCHED_TOKENS=16384
-GPU_MEMORY_UTILIZATION_TEXT=0.87
+```text
+Clone https://github.com/drowzeys/keys-Enhanced-Abliterated-DeepSeekv4-Flash-DSpark-0731-1M-Context-on-Two-DGX-Sparks
+Read AGENTS.md and RESPONSIBLE_USE.md first.
+Stand up DSV4F 0731 L10–35 ablit TP=2 on two DGX Sparks using the Anemll image.
+GPU_MEMORY_UTILIZATION=0.835. MAX_MODEL_LEN=1048576. Never exceed util 0.85.
+Leave NCCL GID unset. DS4 first if co-tenanting H3.
 ```
 
----
-
-## .env.dspark switches
-
-Copy [`.env.dspark.example`](.env.dspark.example) → `.env.dspark`. Start syncs
-it to the worker. **Restart both ranks** after a flip (`./stop-…` then
-`./start-…`). Do not set `DSPARK_MODEL` or `GPU_MEMORY_UTILIZATION` by hand.
-
-NCCL/RoCE, CUDA arch, and compile knobs stay in the example file — they are
-cluster wiring, not product switches. Full Anemll vs Stage-C matrix:
-[docs/ENVS.md](docs/ENVS.md).
-
-### Weights
-
-| Variable | Default | What it does |
-| --- | --- | --- |
-| `DSPARK_REVISION` | `9e165c30e2704aec5d9d593cce3eebd58bbef1cb` | Official pin. Empty = tip of `main`. |
-| `SERVED_MODEL_NAME` | `deepseek-v4-flash-0731` | Name clients send as `model`. |
-| `HF_HUB_OFFLINE` | `1` | `1` after both caches are warm (avoids filling the worker disk). Prepare forces online for the download. |
-
-Update the pin like this:
+Human:
 
 ```bash
-# in .env.dspark
-DSPARK_REVISION=<commit>
-
-./prepare-dspark-model-cache.sh --yes
-./stop-deepseek-v4-flash-dspark.sh
+git clone https://github.com/drowzeys/keys-Enhanced-Abliterated-DeepSeekv4-Flash-DSpark-0731-1M-Context-on-Two-DGX-Sparks.git
+cd keys-Enhanced-Abliterated-DeepSeekv4-Flash-DSpark-0731-1M-Context-on-Two-DGX-Sparks
+bash scripts/one-shot-setup.sh
+# edit MASTER_ADDR / worker IP / NCCL NICs, then:
 ./start-deepseek-v4-flash-dspark.sh
 ```
 
-### Thinking, API, vision
-
-| Variable | Default | What it does |
-| --- | --- | --- |
-| **`DEFAULT_THINKING`** | `max` | `off` / `low` / `high` / `max`. Request-level `chat_template_kwargs` still wins. |
-| `VLLM_HOST` | `0.0.0.0` | `127.0.0.1` for head-only tests. |
-| `VLLM_PORT` | `8888` | Or `./start-… --port 9000` for one launch. |
-| **`ENABLE_VL_SIDECAR`** | `0` | `1` = Qwen3-VL on `:8889` + MCP; also switches main util to `GPU_MEMORY_UTILIZATION_VISION`. |
-| `PREPARE_VL_SIDECAR_MODEL` | `0` | `1` = prepare also downloads VL weights. |
-| `INSTALL_VISION_MCP` | on when VL is on | `0` = sidecar only, skip harness MCP install. |
-
-An explicit `thinking_token_budget` is **off unless you set
-`DSPARK_ENABLE_ISSUE31_GPU_HOTFIX=1`** (then opt-in per request). Default
-stock V2 rejects the field (HTTP 400). `DEFAULT_THINKING=max` still needs a
-generous `max_tokens` or that budget hotfix, or thinking won't end. See
-[Thinking-token budgets](#thinking-token-budgets).
-
-### Serve shape (not on/off, but the knobs that change the lane)
-
-| Variable | Default | What it does |
-| --- | --- | --- |
-| `MAX_MODEL_LEN` | `1048576` | Per-request ceiling (1M). `200000` is the high-concurrency / Keys profile. |
-| `MAX_NUM_SEQS` | `6` | Concurrent slots. `16` only with the 200K + Stage-C path. |
-| `MAX_NUM_BATCHED_TOKENS` | `8192` | Prefill tokens per step. `16384` for big-prompt coding. |
-| `LONG_PREFILL_TOKEN_THRESHOLD` | `1024` | Issue **#27** chunk cap. `0` lets one prefill eat the whole batch (decode starves). |
-| `GPU_MEMORY_UTILIZATION_TEXT` | `0.835` | Used when `ENABLE_VL_SIDECAR=0`. Larger = bigger KV pool. |
-| `GPU_MEMORY_UTILIZATION_VISION` | `0.80` | Used when VL is on. |
-| `MTP_NUM_TOKENS` | `5` | DSpark draft depth. Must be ≥ 5. Capture size = `seqs * (k+1)`. |
-| `VLLM_USE_BREAKABLE_CUDAGRAPH` | `0` | **Keep 0.** Unset enables Anemll’s slower breakable graphs. |
-| `VLLM_PREFIX_CACHE_RETENTION_INTERVAL` | `4096` | Issue **#26** SWA prefix-cache spacing. Leave unless you are debugging warm-cache hits. |
-
-### Hotfixes and diagnostics (on by default unless you skip)
-
-| Variable | Default | What it does |
-| --- | --- | --- |
-| `DSPARK_SUPPRESS_STOPS_IN_REASONING` | `1` | `0` = client `stop` strings can fire inside `<think>` (blank `content`). |
-| `DSPARK_SKIP_SUPPRESS_STOPS_HOTFIX` | `0` | `1` = do not apply that patch at all. |
-| `DSPARK_SKIP_ISSUE22_HOTFIX` | `0` | `1` = skip the `nvfp4_ds_mla` long-context decode fix. Don’t, on this recipe. |
-| `DSPARK_SKIP_HOTFIX` | `0` | `1` = skip the six v0.27 perf backports only (#22 still applies). |
-| `DSPARK_SKIP_SPIN_WAIT_HOTFIX` | `0` | `1` = leave vLLM shm `busy_loop_s=1s` (issue **#79** P-core spin on TP=2). |
-| `DSPARK_ISSUE43_SCHED_DIAG` | `0` | `1` = one scheduler line per step in the vLLM log (mixed prefill/decode). |
-| `DSPARK_ENABLE_ISSUE31_GPU_HOTFIX` | `0` | `1` = apply GPU `thinking_token_budget` at boot (fail-closed). Default stock V2; omit-field clients do not need this ([Issue #66](https://github.com/MiaAI-Lab/DeepSeek-v4-Flash-DSpark-2x-DGX-Spark/issues/66)). |
-| `ENABLE_VLLM_GB10_PATCH` | `0` | `1` = experimental hybrid NVFP4 plugin (`--quantization modelopt_gb10_hybrid`). |
-
-Issue **#21 / #26 / #27 / #43** Python hotfixes always run at container start
-(they are not skipped by `DSPARK_SKIP_HOTFIX`). `#27` + the 1024 prefill cap
-is why six huge cold prompts queue instead of starving decode.
-
-### Stage-C only (no-ops on Anemll `0.1.1`)
-
-These warn `Unknown vLLM environment variable` on the default image. They
-matter only after you switch `DSPARK_VLLM_IMAGE` to Stage-C **and** merge
-`docker-compose.stage-c.override.yml`:
-
-`VLLM_DSPARK_GPU_REJECTED_CONTEXT_MASK`, `VLLM_USE_B12X_WO_PROJECTION`,
-`VLLM_DSPARK_LOCAL_ARGMAX`, `VLLM_DSPARK_REPLICATE_MARKOV_W1`,
-`DSPARK_SLOT_CLAMP`, and the rest of the commented Stage-C block in the
-example. See [Optional: Stage-C / 200K-16](#optional-stage-c--200k-16).
-
----
-
-## What speed to expect
-
-Full tables, method, and older lanes:
-**[results/RESULTS-2026-08-14.md](results/RESULTS-2026-08-14.md)**.
-
-On the **default Anemll 1M/6** stack:
-
-| Workload | What you should see |
-| --- | --- |
-| One chat, any prompt length through 128K | ~62–83 decode tok/s after first token |
-| **Six short chats** (hundreds of tokens), 1M still *allowed* | **~160–190 tok/s aggregate** (~30–37 per stream) |
-| Six **cold 32K–128K** prompts at once | Prefills **queue** (issue #27). ~8 tok/s decode floor; 128K × 6 TTFT minutes |
-
-That ~170–190 c=6 number is **six streams generating**, not six huge prefills.
-Live 2026-08-14 on this cluster: 256 × c=6 = **162** agg; 128K × c=1 still
-**75 tok/s** / **80 s** TTFT.
-
-**315 / 205 tok/s** (200K context, 16 slots) needs the **Stage-C + Keys**
-path. The ~182 1M/6 microbench was also measured with that Keys mask; the
-same *ballpark* on **short** prompts is already what Anemll does (1 Aug
-256 × c=6 = **191** agg; 14 Aug = **162**). Setting
-`VLLM_DSPARK_GPU_REJECTED_CONTEXT_MASK=1` on Anemll `0.1.1` is a **no-op**
-(warning only). See [Optional: Stage-C / 200K-16](#optional-stage-c--200k-16) and
-[docs/ENVS.md](docs/ENVS.md).
-
-Capture: [docs/benchmarks.png](docs/benchmarks.png).
-
----
-
-## Thinking and `max_tokens`
-
-> [!IMPORTANT]
-> The #31 GPU budget patch is **opt-in at boot** (`DSPARK_ENABLE_ISSUE31_GPU_HOTFIX=1`)
-> and then opt-in per request. Default is stock V2: do not send
-> `thinking_token_budget`. When enabled, counters stay on the GPU; omitting the
-> field does not inject a server-side default. Leave the flag at `0` unless a
-> client actually sends the field ([Issue #66](https://github.com/MiaAI-Lab/DeepSeek-v4-Flash-DSpark-2x-DGX-Spark/issues/66)).
-
-`max_tokens` counts **think + answer** (reasoning + visible response + tool
-markup). With `DEFAULT_THINKING=max`, a harness cap of 256/512/800 often
-returns `content: null` / `finish_reason: length` because reasoning eats the
-whole budget — `max` ships a checkpoint-level directive ("do not stop reasoning
-until … no error remains undiscovered") and produced **~50,000 reasoning chars
-(~12.5k tokens) on a moderate prompt** in live measurement. So "size `max_tokens`
-accordingly" means **tens of thousands of tokens**, not a small bump. Raise
-`max_tokens`, set thinking `low` / `off`, or — with
-`DSPARK_ENABLE_ISSUE31_GPU_HOTFIX=1` — send an explicit `thinking_token_budget`
-(see [Thinking-token budgets](#thinking-token-budgets)) so reasoning is
-hard-capped and the rest of `max_tokens` is left for the visible answer.
-
-Client `stop` strings used to fire inside `<think>`. The recipe applies
-`patches/hotfix-dsv4-suppress-stops-in-reasoning.py` so they wait for
-`</think>`. Opt out: `DSPARK_SUPPRESS_STOPS_IN_REASONING=0`.
-
-A tool call cut off by `max_tokens` used to report `finish_reason: "tool_calls"`
-with **invalid JSON** `arguments` and silently poison the transcript (HTTP 400 on
-the next turn). The recipe applies `patches/hotfix-dsv4-issue55-tool-truncation.py`
-so a truncated call reports `finish_reason: "length"` (not `"tool_calls"`) and any
-non-JSON-parseable `arguments` are dropped. Clients that read `length` can discard
-the in-flight call and retry; normal model-stopped tool calls keep
-`finish_reason: "tool_calls"`. Harnesses that **ignore** `finish_reason` and
-blindly replay `args` from streaming deltas can still hit a 400 - verify your
-client drops an in-progress tool call on `finish_reason: "length"`.
-
-
-### Thinking-token budgets
-
-`max_tokens` caps **all** new tokens (reasoning + visible answer + tool
-markup). `thinking_token_budget` caps only the reasoning portion and forces a
-single `</think>` at the boundary, leaving the rest of `max_tokens` available
-for the visible answer or tool call. A budget of `0` disables reasoning for
-that request. Natural `</think>` remains untouched.
-
-The field is HTTP 400 on stock V2. Set `DSPARK_ENABLE_ISSUE31_GPU_HOTFIX=1` and
-recreate the containers, then send it when a hard cap is required. Omitting it
-keeps `DEFAULT_THINKING` behavior. Keep `max_tokens` comfortably above the
-thinking budget so the answer has room.
-
-```json
-{
-  "max_tokens": 8192,
-  "thinking_token_budget": 1024,
-  "temperature": 0.6,
-  "top_p": 0.95,
-  "chat_template_kwargs": {"thinking": true, "reasoning_effort": "high"}
-}
-```
-
-Inspect `finish_reason` and `completion_tokens`. `length` + null `content`
-means think ate the cap.
-
-### Enabling the budget from a client
-
-`thinking_token_budget` needs the boot flag **and** the request field — the
-server injects no default when the field is omitted. To turn it on, set
-`DSPARK_ENABLE_ISSUE31_GPU_HOTFIX=1`, recreate, then send it from the client:
-
-**curl / any OpenAI-compatible client** — add `thinking_token_budget` to the
-request body. `0` disables reasoning for that one call; `N>0` caps reasoning at
-`N` generated tokens and leaves the rest of `max_tokens` for the visible
-answer:
-
-```bash
-curl :8888/v1/chat/completions -H 'Content-Type: application/json' -d '{
-  "model":"deepseek-v4-flash-0731",
-  "messages":[{"role":"user","content":"Design a small rate limiter."}],
-  "max_tokens":4096,
-  "thinking_token_budget":1024,
-  "temperature":0.6,"top_p":0.95,
-  "chat_template_kwargs":{"thinking":true,"reasoning_effort":"high"}
-}'
-```
-
-**pi** — set a reasoning budget in the model entry, and pi sends the field
-for you on every request where you enable thinking. Copy
-[`pi-models.dspark.example.json`](pi-models.dspark.example.json) to
-`~/.pi/agent/models.json`, then add a `thinkingTokenBudget` (in tokens) to the
-`deepseek-v4-flash-0731` model:
-
-```json
-{
-  "id": "deepseek-v4-flash-0731",
-  "reasoning": true,
-  "thinkingTokenBudget": 1024,
-  "compat": {
-    "supportsThinkingTokenBudget": true,
-    "thinkingFormat": "chat-template",
-    "chatTemplateKwargs": {
-      "thinking":       { "$var": "thinking.enabled" },
-      "reasoning_effort": { "$var": "thinking.effort", "omitWhenOff": true },
-      "thinking_token_budget": { "$var": "model.thinkingTokenBudget", "omitWhenUnset": true }
-    }
-  }
-}
-```
-
-`supportsThinkingTokenBudget: true` advertises the capability so pi will send
-the field; `"$var": "model.thinkingTokenBudget"` with `omitWhenUnset: true`
-means the budget is only attached when you set one in the model — otherwise the
-stock fast path runs. Remove the `thinkingTokenBudget` line (or set it to `0`)
-to let the model reason freely again.
-
----
-
-## How the KV cache works (why 1M + concurrency is safe)
-
-| Knob | Meaning | This build |
-| --- | --- | --- |
-| KV pool | Shared blocks after weights load | ~2.49M tokens @ util 0.835 |
-| `max_model_len` | Per-request **ceiling** | 1,048,576 |
-| `max_num_seqs` | Max **active** sequences | 6 |
-
-```
-6 ×  50k  =  300k   easy
-6 × 200k  =  1.2M   fits
-6 × 500k  =  3.0M   near/over pool
-6 ×   1M  =  6.0M   impossible — extras queue
-```
-
-The boot line `Maximum concurrency for 1,048,576 tokens … ~2.4x` only means a
-few *simultaneous full-1M* requests fit.
-
----
-
-## If output garbles, loops, or leaks XML
-
-Validate **direct** `:8888` first, then the agent harness.
-
-1. Same image digest on both nodes (`docker image inspect $DSPARK_VLLM_IMAGE`).
-   Compose must use `/usr/local/bin/vllm` (Anemll), not Stage-C `/opt/env`.
-2. Full 0731 hub snapshot on **head and worker**, including
-   `encoding/encoding_dsv4.py`.
-3. Send `temperature: 0` for deterministic curls. Clear harness fallback lists
-   so another model cannot poison the transcript.
-
-If direct vLLM is clean and the agent is not, fix the harness — do not switch
-to fp8 or a smaller model to hide it.
-
----
-
-## Optional: Stage-C / 200K-16
-
-Historical overlay image `vllm-dspark-runtime:dspark-nvfp4-stage-c`
-(`./build-dspark-vllm-runtime.sh`). **Both** nodes need that image.
-Merge [`docker-compose.stage-c.override.yml`](docker-compose.stage-c.override.yml)
-— `./start-*.sh` does **not** add that file by itself — and uncomment the
-Stage-C block in `.env.dspark`.
-
-| Profile | Env | Published headline |
-| --- | --- | --- |
-| Keep 1M / 6 | `MAX_MODEL_LEN=1048576`, `MAX_NUM_SEQS=6`, Keys mask | ~182 agg on a short-prompt microbench |
-| High aggregate | `MAX_MODEL_LEN=200000`, `MAX_NUM_SEQS=16`, Keys mask | 315 static / 205 staggered |
-
-Issue **#27** (`LONG_PREFILL_TOKEN_THRESHOLD=1024`, one in-flight long prefill)
-still **serializes** huge cold prefills. Stage-C does not turn 6 × 128K into
-six parallel 80 s reads. Details: [results/RESULTS-2026-08-14.md](results/RESULTS-2026-08-14.md),
-[docs/PATCHES.md](docs/PATCHES.md).
-
-Compose is Anemll-shaped (`/usr/local/bin/vllm`, hotfixes under
-`/usr/local/lib/...`). Treat the first Stage-C boot as an experiment.
-
----
-
-## Experimental: Vision
-
-Not the default ship. 0731 on `:8888` stays text-only. Optional Qwen3-VL-4B
-sidecar on `:8889` + `ds4f-vision` MCP. See
-[results/vl-nvfp4-coexist-2026-08-11.md](results/vl-nvfp4-coexist-2026-08-11.md).
-
-```env
-ENABLE_VL_SIDECAR=1
-PREPARE_VL_SIDECAR_MODEL=1
-```
-
-Then prepare, stop, start. Text-only util is **0.835**; vision drops main util
-to **0.80** and shrinks the 0731 KV pool.
-
----
-
-## Runtime flags (default compose)
-
-- `/usr/local/bin/vllm serve` · TP=2 · `mp` · `nnodes 2`
-- `--kv-cache-dtype nvfp4_ds_mla` · `--block-size 256`
-- `--max-model-len 1048576` · `--max-num-seqs 6` · `--max-num-batched-tokens 8192`
-- `--long-prefill-token-threshold 1024` · `--enable-chunked-prefill` · `--async-scheduling`
-- `--max-cudagraph-capture-size` = `MAX_NUM_SEQS * (MTP_NUM_TOKENS + 1)` → 36 at 6×5
-- `--moe-backend flashinfer_b12x` · `--generation-config vllm`
-- DSpark: `{"method":"dspark","num_speculative_tokens":5,"draft_sample_method":"probabilistic"}`
-
-This is the **Stage C padded NVFP4** path (584-byte sparse-MLA envelope via
-`nvfp4_ds_mla`). It is not the abandoned 416-byte “true layout” experiment.
-
-Optional GB10 hybrid plugin: `ENABLE_VLLM_GB10_PATCH=1 ./start-…`
-(`--quantization modelopt_gb10_hybrid`). Default off.
-
-CI on every pull request and push to `main` ([`.github/workflows/validate.yml`](.github/workflows/validate.yml))
-is **CPU-only** (`scripts/ci-validate.sh`). Live tok/s still needs the 2× Spark pair.
-
-### Strict Responses API verification
-
-Stateful `previous_response_id` continuation requires starting vLLM with
-`VLLM_ENABLE_RESPONSES_API_STORE=1`. vLLM keeps the Responses API store off
-by default; when enabled, stored response state consumes memory and is retained
-until the server restarts. A continuation `response_id` 404 while the other
-gates pass indicates this configuration is off, not a verifier regression.
-
-Existing live evidence: the stock configuration passed 3/4 gates, with only
-the known configuration 404; a controlled
-`VLLM_ENABLE_RESPONSES_API_STORE=1` run passed all four gates.
-
-After the server is ready, run the dependency-free live verifier to check
-Responses text/SSE, stateful tool continuation, strict JSON schema, reasoning,
-invalid-field errors, appended multi-turn prefix reuse, and disconnect cleanup:
-
-```bash
-python3 scripts/verify-responses-api-live.py \
-  --base-url http://127.0.0.1:8888/v1 \
-  --model deepseek-v4-flash-0731 \
-  --output results/responses-api-live.json
-```
-
-The full run intentionally creates a ~21K-token appended conversation and a
-forced client disconnect. Use `--skip-multiturn` or `--skip-disconnect` only
-when the corresponding live behavior is outside the test scope.
-
----
-
-## Files
-
-| Path | Purpose |
-| --- | --- |
-| [results/RESULTS-2026-08-14.md](results/RESULTS-2026-08-14.md) | Dated benches and how to read them |
-| `.env.dspark.example` | Cluster template |
-| `docker-compose.dspark.yml` | Anemll serve (installs 0731 encoder + hotfixes) |
-| `start-` / `stop-` / `status-` / `logs-` / `smoke-*.sh` | Two-node ops |
-| `prepare-dspark-model-cache.sh` | 0731 (and optional VL) on head **and** worker |
-| `scripts/benchmark-0731.py` | Prompt × concurrency sweep |
-| `scripts/verify-responses-api-live.py` | Strict Responses, multi-turn cache, and disconnect gates |
-| [docs/ENVS.md](docs/ENVS.md) | Anemll vs Stage-C env matrix |
-| [docs/PATCHES.md](docs/PATCHES.md) | Keys / #27 / #22 notes |
-| `patches/` | Issue hotfixes applied at container start |
-| `docker-compose.stage-c.override.yml` | Stage-C-only env injection |
-| `build-dspark-vllm-runtime.sh` | Optional local Stage-C image |
-
----
+## Stack
+
+| Piece | Value |
+|---|---|
+| Image | `ghcr.io/anemll/dspark-vllm-gx10:0.1.1` (also mirrored `ghcr.io/drowzeys/keys-dsv4f-0731-ablit-1m-two-spark:1.0-beta`) |
+| Recipe carrier | `ghcr.io/drowzeys/keys-dsv4f-0731-ablit-1m-two-spark-recipe:1.0-beta` |
+| Topology | TP=2, two GB10, RoCEv2 |
+| KV | `nvfp4_ds_mla` |
+| Ablit | L10–35 `wo_b` λ3.5 anchorstock (DSpark 36–42 stock). L10–42 mida is the fuller ablit, not this speed champion. |
+| API | `:8888` · id `deepseek-v4-flash-0731` |
 
 ## Credits
 
-Full list: [`CREDITS.md`](CREDITS.md).
-
-**[drowzeys ("Keys")](https://github.com/drowzeys/)** — DSpark concurrency
-patch, ragged `query_start_loc`, `nvfp4_ds_mla` wiring.
-Also: [tonyd2wild](https://github.com/tonyd2wild/), Rafael Caricio, Fraser Price,
-[Anemll](https://github.com/Anemll/dspark-vllm-gx10), MiaAI-Lab packaging.
-
-Repo scripts/docs: this repo’s `LICENSE`. Overlay/runtime: Apache-2.0 / upstream
-licenses. Weights and base images have their own terms.
+- **Anemll** runtime: [Anemll/dspark-vllm-gx10](https://github.com/Anemll/dspark-vllm-gx10)
+- **MiaAI-Lab** 2× Spark packaging: [MiaAI-Lab/DeepSeek-v4-Flash-DSpark-2x-DGX-Spark](https://github.com/MiaAI-Lab/DeepSeek-v4-Flash-DSpark-2x-DGX-Spark)
+- **Tony / tonyd2wild** dual-serve factory lineage: [ds4-h3-video-gen-factory](https://github.com/tonyd2wild/ds4-h3-video-gen-factory)
+- Keys ablit + 1.0 Beta champion knobs: drowzeys

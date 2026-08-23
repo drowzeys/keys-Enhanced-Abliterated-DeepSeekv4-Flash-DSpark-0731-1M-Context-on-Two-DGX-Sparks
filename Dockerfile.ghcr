@@ -1,0 +1,10 @@
+# Recipe carrier (tiny). Runtime image is Anemll, mirrored separately as
+# ghcr.io/drowzeys/keys-dsv4f-0731-ablit-1m-two-spark:1.0-beta
+FROM busybox:1.36
+LABEL org.opencontainers.image.title="keys-Enhanced-Abliterated-DeepSeekv4-Flash-DSpark-0731-1M-Context-on-Two-DGX-Sparks recipe"
+LABEL org.opencontainers.image.version="1.0.0-beta"
+LABEL org.opencontainers.image.source="https://github.com/drowzeys/keys-Enhanced-Abliterated-DeepSeekv4-Flash-DSpark-0731-1M-Context-on-Two-DGX-Sparks"
+COPY README.md AGENTS.md VERSION /omlx/
+COPY scripts/ /omlx/scripts/
+COPY results/1.0-beta/ /omlx/results/
+CMD ["/bin/sh","-c","echo keys-dsv4f-0731-ablit-1m-two-spark-recipe 1.0-beta; ls -la /omlx"]
